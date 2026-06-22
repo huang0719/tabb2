@@ -12,6 +12,7 @@ from typing import AsyncGenerator
 import httpx
 
 SIGN_KEY = "f8d0e6a73f8d4b1a9c3d2e1f9a4b7c6d"
+TABBIT_VERSION_CONTEXT = "0.33.13(10033013)"
 MODEL_MAP = {}
 
 
@@ -21,9 +22,11 @@ def normalize_model_id(display_name: str) -> str:
 
 
 # // 从 Tabbit 当前模型配置接口读取模型映射
-async def fetch_model_map(base_url: str | None = None) -> dict[str, str]:
+async def fetch_model_map(
+    base_url: str | None = None, proxy_url: str | None = None
+) -> dict[str, str]:
     api_base = base_url or "https://web.tabbitbrowser.com"
-    async with httpx.AsyncClient(timeout=15, verify=False) as client:
+    async with httpx.AsyncClient(timeout=15, verify=False, proxy=proxy_url or None) as client:
         resp = await client.get(
             f"{api_base}/proxy/v1/model_config/models",
             params={"a": "0", "scene": "chat"},
@@ -55,10 +58,40 @@ async def fetch_model_map(base_url: str | None = None) -> dict[str, str]:
     return model_map
 
 
+# // 生成 Tabbit 前端 unique-uuid
+def make_unique_uuid(is_default_browser: bool = True) -> str:
+    hex_chars = "0123456789abcdef"
+    fallback_chars = hex_chars.replace("1", "")
+    marker_pos = 5
+    timestamp_positions = [2, 7, 11, 14, 18, 21, 25, 28]
+    timestamp = hex(int(time.time()))[2:].rjust(len(timestamp_positions), "0")[
+        -len(timestamp_positions) :
+    ]
+    timestamp_map = dict(zip(timestamp_positions, timestamp))
+
+    value = ""
+    for index in range(32):
+        if index == marker_pos:
+            value += "1" if is_default_browser else secrets.choice(fallback_chars)
+        elif index in timestamp_map:
+            value += timestamp_map[index]
+        else:
+            value += secrets.choice(hex_chars)
+    return "-".join(
+        [value[:8], value[8:12], value[12:16], value[16:20], value[20:]]
+    )
+
+
 # // 操作 Tabbit Web API
 class TabbitClient:
     # // 初始化 Tabbit 客户端和认证字段
-    def __init__(self, token_str: str, base_url: str | None = None, client_id: str | None = None):
+    def __init__(
+        self,
+        token_str: str,
+        base_url: str | None = None,
+        client_id: str | None = None,
+        proxy_url: str | None = None,
+    ):
         parts = token_str.split("|")
         self.jwt_token = parts[0]
         self.next_auth = parts[1] if len(parts) > 1 else None
@@ -66,11 +99,13 @@ class TabbitClient:
         self.user_id = self._extract_user_id(self.jwt_token)
         self.base_url = base_url or "https://web.tabbitbrowser.com"
         self.client_id = client_id or "e7fa44387b1238ef1f6f"
+        self.proxy_url = proxy_url or None
 
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=15, read=120, write=15, pool=15),
             follow_redirects=False,
             verify=False,
+            proxy=self.proxy_url,
         )
 
     # // 从 JWT 中提取用户标识
@@ -89,6 +124,10 @@ class TabbitClient:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
             "sec-ch-ua": '"Not:A-Brand";v="99", "Tabbit";v="145", "Chromium";v="145"',
             "sec-ch-ua-platform": '"Windows"',
+            "x-req-ctx": base64.b64encode(
+                TABBIT_VERSION_CONTEXT.encode("utf-8")
+            ).decode("ascii"),
+            "x-next-intl-locale": "zh-CN",
             "x-chrome-id-consistency-request": (
                 f"version=1,client_id={self.client_id},"
                 f"device_id={self.device_id},sync_account_id={self.user_id},"
@@ -172,7 +211,7 @@ class TabbitClient:
 
     # // 获取当前 Tabbit 支持的模型映射
     async def get_model_map(self) -> dict[str, str]:
-        return await fetch_model_map(self.base_url)
+        return await fetch_model_map(self.base_url, self.proxy_url)
 
     # // 向 Tabbit 发送聊天消息并返回 SSE 事件
     async def send_message(
@@ -180,6 +219,7 @@ class TabbitClient:
     ) -> AsyncGenerator[dict, None]:
         payload = {
             "chat_session_id": session_id,
+            "message_id": str(uuid.uuid4()),
             "content": content,
             "selected_model": model,
             "parallel_group_id": None,
@@ -199,13 +239,13 @@ class TabbitClient:
             "Accept": "text/event-stream",
             "Content-Type": "application/json",
             "Cache-Control": "no-cache",
-            "unique-uuid": self.device_id,
+            "unique-uuid": make_unique_uuid(),
             **self._get_sign_headers(body_text),
         }
 
         async with self.client.stream(
             "POST",
-            f"{self.base_url}/chat/send",
+            f"{self.base_url}/api/v1/chat/completion",
             content=body_text,
             headers=headers,
             cookies=self._get_cookies(),
@@ -223,8 +263,13 @@ class TabbitClient:
                 elif line.startswith("data:") and current_event:
                     data_str = line[len("data:") :].strip()
                     try:
-                        yield {"event": current_event, "data": json.loads(data_str)}
+                        data = json.loads(data_str)
+                        if current_event == "error":
+                            raise Exception(f"Tabbit SSE error: {data}")
+                        yield {"event": current_event, "data": data}
                     except Exception as e:
+                        if current_event == "error":
+                            raise
                         raise Exception(
                             f"Failed to parse Tabbit SSE event {current_event}: {data_str}"
                         ) from e

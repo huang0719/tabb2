@@ -10,7 +10,8 @@
   },
   "tabbit": {
     "base_url": "https://web.tabbitbrowser.com",
-    "client_id": "e7fa44387b1238ef1f6f"
+    "client_id": "e7fa44387b1238ef1f6f",
+    "proxy_url": ""
   },
   "tokens": [
     {

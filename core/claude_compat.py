@@ -40,47 +40,34 @@ def generate_tool_id() -> str:
 # ── 工具 Prompt 注入 ──
 
 TOOL_PROMPT_TEMPLATE = """
-In this environment you have access to a set of tools you can use to answer the user's question.
+You are connected to a tool-capable Anthropic Messages API proxy.
+The XML format below is the real tool call protocol for this proxy.
+Do not say tools are unavailable.
+Do not answer from your own knowledge when the user asks you to call a tool.
 
-When you need to use a tool, you MUST strictly follow the format below.
-
-**1. Available Tools:**
-Here is the list of tools you can use. You have access ONLY to these tools and no others.
-<antml\\b:tools>
+Available tools:
 {tools_list}
-</antml\\b:tools>
 
-**2. Tool Call Procedure:**
-When you decide to call a tool, you MUST output EXACTLY this trigger signal: {trigger_signal}
-The trigger signal MUST be output on a completely empty line by itself before any tool calls.
-Do NOT add any other text, spaces, or characters before or after {trigger_signal} on that line.
-You may provide explanations or reasoning before outputting {trigger_signal}, but once you decide to make a tool call, {trigger_signal} must come first.
-You MUST output the trigger signal {trigger_signal} ONLY ONCE per response. Never output multiple trigger signals in a single response.
+If a tool is needed, do not answer in natural language. Output exactly this format:
 
-After outputting the trigger signal, immediately provide your tool calls enclosed in <invoke> XML tags.
-
-**3. XML Format for Tool Calls:**
-Your tool calls must be structured EXACTLY as follows. This is the ONLY format you can use, and any deviation will result in failure.
-
-<antml\\b:format>
 {trigger_signal}
-<invoke name="Write">
-<parameter name="file_path">C:\\path\\weather.css</parameter>
-<parameter name="content"> body {{ background-color: lightblue; }} </parameter>
+<invoke name="tool_name">
+<parameter name="param_name">param_value</parameter>
 </invoke>
-</antml\\b:format>
 
-IMPORTANT RULES:
-  - You may provide explanations or reasoning before deciding to call a tool.
-  - Once you decide to call a tool, you must first output the trigger signal {trigger_signal} on a separate line by itself.
-  - The trigger signal may only appear once per response and must not be repeated.
-  - Tool calls must use the exact XML format below: immediately after the trigger signal, use <invoke> and <parameter> tags.
-  - No additional text may be added after the closing </invoke> tag.
-  - Parameters must retain punctuation (including hyphen prefixes) exactly as defined.
-  - Encode arrays and objects in JSON before placing inside <parameter>.
-  - Be concise when not using tools.
-  - 在调用工具后会得到工具调用结果，所以请在一次工具调用得到结果后再调用下一个。
-  """
+Rules:
+- Put {trigger_signal} on its own line before every tool call response.
+- Use only one <invoke> block unless the user explicitly needs multiple tools.
+- The invoke name must exactly match one available tool name.
+- Each required parameter must be present.
+- For object or array parameters, put compact JSON inside the parameter tag.
+- Do not wrap the response in Markdown.
+- Do not explain the tool call.
+- If the user asks to call a listed tool, you must output the tool call protocol.
+- For file-writing tools such as WriteFile, write_file, or create_file, the content parameter must be the raw complete file content.
+- Never put Markdown links, fenced code blocks, escaped underscores, or explanatory text inside a file content parameter.
+- HTML file content must be a complete document with <!doctype html>, <html>, <head>, <body>, and closed <script> tags.
+"""
 
 
 def _escape_xml(text: str) -> str:
@@ -263,6 +250,11 @@ def map_claude_to_content(
         parts.append(f"[{label}]: {content}")
 
     # 4. 末尾提示
+    if tools and trigger_signal:
+        parts.append(
+            "[System]: Final tool instruction: if the last user request asks for a listed tool, output only "
+            f"{trigger_signal} followed by one <invoke> block. Do not explain. Do not refuse."
+        )
     parts.append("[Assistant]:")
 
     return "\n\n".join(parts)
@@ -283,7 +275,7 @@ def _parse_invoke_xml(xml: str) -> dict | None:
             r'<parameter[^>]*name="([^"]+)"[^>]*>([\s\S]*?)</parameter>', xml, re.I
         ):
             key = m.group(1)
-            raw = m.group(2).strip()
+            raw = _clean_tool_argument(key, m.group(2).strip())
             if raw:
                 try:
                     params[key] = json.loads(raw)
@@ -294,6 +286,193 @@ def _parse_invoke_xml(xml: str) -> dict | None:
         return {"name": name, "arguments": params}
     except Exception:
         return None
+
+
+# // 清理模型生成工具参数中的常见 Markdown 污染
+def _clean_tool_argument(key: str, value: str) -> str:
+    value = value.replace("\\_", "_")
+    lowered = key.lower()
+    if lowered not in ("content", "text", "html"):
+        return value
+
+    cleaned = value
+    fence_match = re.fullmatch(r"```[A-Za-z0-9_-]*\s*\n([\s\S]*?)\n?```", cleaned)
+    if fence_match:
+        cleaned = fence_match.group(1)
+
+    cleaned = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cleaned)
+    cleaned = cleaned.replace('\\"', '"')
+    cleaned = re.sub(
+        r'(<script\s+src="https?://[^"]+">\s*)(?!</script>)',
+        r"\1</script>",
+        cleaned,
+        flags=re.I,
+    )
+    return cleaned.strip()
+
+
+# // 将完整文本解析为 Claude 事件
+def parse_toolified_text(
+    text: str, trigger_signal: str | None = None, thinking_enabled: bool = False
+) -> list[dict]:
+    parser = ToolifyParser(trigger_signal, thinking_enabled)
+    for char in text:
+        parser.feed_char(char)
+    parser.finish()
+    return parser.consume_events()
+
+
+# // 将解析事件转换为非流式 Claude content blocks
+def events_to_content_blocks(events: list[dict]) -> tuple[list[dict], str]:
+    blocks: list[dict] = []
+    stop_reason = "end_turn"
+    for event in events:
+        etype = event["type"]
+        if etype == "text":
+            content = event.get("content", "")
+            if content.strip():
+                blocks.append({"type": "text", "text": content})
+        elif etype == "thinking":
+            content = event.get("content", "")
+            if content:
+                blocks.append({"type": "thinking", "thinking": content})
+        elif etype == "tool_call":
+            call = event["call"]
+            blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": generate_tool_id(),
+                    "name": call["name"],
+                    "input": call["arguments"],
+                }
+            )
+            stop_reason = "tool_use"
+    return blocks, stop_reason
+
+
+# // 从用户文本中提取工具参数
+def _extract_direct_tool_arguments(tool: dict, user_text: str) -> dict | None:
+    schema = tool.get("input_schema", {})
+    props = schema.get("properties", {})
+    required = schema.get("required", [])
+    args: dict[str, Any] = {}
+
+    for name in props:
+        lowered = name.lower()
+        if lowered in ("path", "file_path", "filepath"):
+            match = re.search(
+                r"([A-Za-z]:[\\/][\s\S]+?)(?:[，,]\s*(?:内容|content)|。|；|;|$)",
+                user_text,
+            )
+            if not match:
+                match = re.search(r"(?:写入|保存到|创建文件)\s*([^\s，。；;]+)", user_text)
+            if match:
+                args[name] = match.group(1).strip()
+        elif lowered in ("content", "text"):
+            match = re.search(
+                r"(?:内容(?:为|是)?|content\s*(?:is|=|:)?)[\s:：]*([^\n。；;]+)",
+                user_text,
+                re.I,
+            )
+            if not match:
+                match = re.search(r"[，,]\s*内容\s*([\s\S]+?)(?:。|；|;|$)", user_text)
+            if match:
+                args[name] = match.group(1).strip()
+        elif lowered in ("city", "location"):
+            match = re.search(r"(?:查询|查看|获取)\s*([^\s，。；;]+?)\s*(?:当前)?(?:时间|天气)", user_text)
+            if match:
+                args[name] = match.group(1).strip()
+
+    if len(required) == 1 and required[0] not in args:
+        cleaned = re.sub(r"请|必须|调用|工具|不要.*$", "", user_text).strip(" ，。；;")
+        if cleaned:
+            args[required[0]] = cleaned
+
+    missing = [name for name in required if name not in args]
+    if missing:
+        return None
+    return args
+
+
+# // 从用户文本中提取写文件路径
+def _extract_direct_write_path(user_text: str) -> str | None:
+    match = re.search(r"([A-Za-z]:[\\/][\s\S]+?)(?:[，,。；;]|\s*$)", user_text)
+    if match:
+        return match.group(1).strip()
+    match = re.search(r"(?:写入|保存到|创建文件)\s*([^\s，。；;]+)", user_text)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+# // 在明确工具请求时直接构造 Claude tool_use
+def build_direct_tool_call(body: dict) -> dict | None:
+    tools = body.get("tools", [])
+    if not tools:
+        return None
+
+    tool_choice = body.get("tool_choice")
+    selected_tool = None
+    forced_tool = False
+    if isinstance(tool_choice, dict):
+        choice_type = tool_choice.get("type")
+        if choice_type == "tool":
+            selected_name = tool_choice.get("name")
+            selected_tool = next(
+                (tool for tool in tools if tool.get("name") == selected_name), None
+            )
+            forced_tool = selected_tool is not None
+        elif choice_type == "any":
+            selected_tool = tools[0]
+            forced_tool = True
+
+    user_text = ""
+    for msg in reversed(body.get("messages", [])):
+        if msg.get("role") != "user":
+            continue
+        user_text = normalize_blocks(msg.get("content", ""))
+        break
+
+    if not selected_tool:
+        for tool in tools:
+            name = tool.get("name", "")
+            if name and name in user_text:
+                selected_tool = tool
+                break
+
+    if not selected_tool and len(tools) == 1:
+        lowered_text = user_text.lower()
+        tool_name = tools[0].get("name", "").lower()
+        if (
+            "调用" in user_text
+            or "工具" in user_text
+            or "call" in lowered_text
+            or "tool" in lowered_text
+            or (
+                tool_name in ("writefile", "write_file", "create_file")
+                and _extract_direct_write_path(user_text)
+            )
+        ):
+            selected_tool = tools[0]
+
+    if not selected_tool:
+        return None
+
+    arguments = _extract_direct_tool_arguments(selected_tool, user_text)
+    if arguments is None:
+        if selected_tool["name"].lower() in ("writefile", "write_file", "create_file"):
+            path = _extract_direct_write_path(user_text)
+            if path:
+                arguments = {"path": path}
+            elif forced_tool:
+                arguments = {}
+            else:
+                return None
+        elif forced_tool:
+            arguments = {}
+        else:
+            return None
+    return {"name": selected_tool["name"], "arguments": arguments}
 
 
 class ToolifyParser:
@@ -343,6 +522,17 @@ class ToolifyParser:
             self.buffer = ""
             self.capturing = True
             self.capture_buffer = ""
+            return
+
+        invoke_idx = self.buffer.lower().find("<invoke")
+        if invoke_idx != -1:
+            text_before = self.buffer[:invoke_idx]
+            if text_before:
+                self.events.append({"type": "text", "content": text_before})
+            self.capture_buffer = self.buffer[invoke_idx:]
+            self.buffer = ""
+            self.capturing = True
+            self._try_emit_invokes()
 
     def finish(self):
         if self.buffer:

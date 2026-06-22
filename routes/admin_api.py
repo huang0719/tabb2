@@ -9,7 +9,7 @@ from typing import Optional
 from core.config import ConfigManager, hash_password
 from core.auth import create_jwt, verify_password, require_admin
 from core.token_manager import TokenManager
-from core.tabbit_client import TabbitClient
+from core.tabbit_client import TabbitClient, make_unique_uuid
 from core.log_store import LogStore
 
 logger = logging.getLogger("tabbit2openai")
@@ -165,6 +165,7 @@ def init(config: ConfigManager, token_manager: TokenManager, log_store: LogStore
             target["value"],
             _cfg.get("tabbit", "base_url"),
             _cfg.get("tabbit", "client_id"),
+            _cfg.get("tabbit", "proxy_url"),
         )
         try:
             session_id = await client.create_chat_session()
@@ -179,6 +180,7 @@ def init(config: ConfigManager, token_manager: TokenManager, log_store: LogStore
         finally:
             await client.client.aclose()
 
+    # // 用 Google id_token 换取 Tabbit Token
     @r.post("/tokens/google-login", dependencies=[Depends(admin_dep)])
     async def google_login(req: GoogleLoginRequest):
         """用 Google id_token 调用 Tabbit API 换取登录凭据，返回格式化后的 token"""
@@ -220,9 +222,9 @@ def init(config: ConfigManager, token_manager: TokenManager, log_store: LogStore
                 if m:
                     cookies[m.group(1).strip()] = m.group(2).strip()
 
-        jwt_token = cookies.get("token", "")
+        jwt_token = cookies.get("token", "") or body.get("access_token", "")
         next_auth = cookies.get("next-auth.session-token", "")
-        device_id = str(uuid.uuid4())
+        device_id = make_unique_uuid()
 
         # 也尝试从 body.data 取
         data = body.get("data")

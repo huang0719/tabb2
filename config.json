@@ -1,0 +1,40 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8800
+  },
+  "admin": {
+    "password_hash": "47125d96517129b9b2b38bc993cb7724f0793199585cf0380a75e9166bda47bb",
+    "salt": "69f230cbcbe19c1213899624b33d38b2",
+    "jwt_secret": "3eb414580c4a343894a8e69c6cb1ca69a97d5c503b193611e08cac8cf08aff46"
+  },
+  "tabbit": {
+    "base_url": "https://web.tabbitbrowser.com",
+    "client_id": "e7fa44387b1238ef1f6f",
+    "proxy_url": "http://127.0.0.1:10809"
+  },
+  "tokens": [
+    {
+      "id": "17be3000-0f22-4e21-9cec-50541342fbde",
+      "name": "local-tabbit",
+      "value": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImNlcnRfNXh5Z21kIiwidHlwIjoiSldUIn0.eyJuYW1lIjoidXNlcl8wNmUxYWVhZmVmZGYiLCJpZCI6IjQ2MDUzZGI0LTkwODgtNGM2NC1iN2JmLTMwMmI3ZWMxNzU3NiIsInRva2VuVHlwZSI6ImFjY2Vzcy10b2tlbiIsInRhZyI6IiIsInNjb3BlIjoidGFiIiwiYXpwIjoiZTdmYTQ0Mzg3YjEyMzhlZjFmNmYiLCJpc3MiOiJodHRwczovL3dlYi50YWItYnJvd3Nlci5jb20iLCJzdWIiOiI0NjA1M2RiNC05MDg4LTRjNjQtYjdiZi0zMDJiN2VjMTc1NzYiLCJhdWQiOlsiZTdmYTQ0Mzg3YjEyMzhlZjFmNmYiXSwiZXhwIjoxNzgyNzA4MTQ4LCJuYmYiOjE3ODIxMDMzNDgsImlhdCI6MTc4MjEwMzM0OCwianRpIjoiYWRtaW4vMTI5Mzk1NzctOTBhMi00N2VlLTlhNTYtYTU3M2U0NmQ3Yjc2In0.rd6V_q6yR-lqXtlHwAecRbXrDfJLmVTl25apjlF-jcEXZhoGfbszxTsV42GGD-6-JRlPr6KAHgo71aRdCXPHM4ZqYDRGwXOffvaYzfRCQdTj8DhCXz7qG6w2rzCwxTqkRu5X4jMq667_Lu9vsDjUm9oAaD0oNatRCmDRoM4RSvgIizhtIb1gq8DIzPtvb1e3jSg74rP7Zbapuc9wdhdAdM7R-l81h2eI3hCfiY2sAjMPNrOklWflwghN5V1zEuFQpF2_vFNMOLNyuJSc6yqNuVA3qhwJR6AU3HGCQf6mD7ZXUei4SlaIlfo5Plirhlg_MHrCv6G6CoRxeVGTHanYOmaCwMHckMXB2zvLzHNTROz4oiUvFUWRUgcom860pL5LTRYI4rPte7zW_Ei7pUSBNIb27Lu91BP2lIMPxGfotRcHsmv1D7EdBBsGxjEsPOdaQzYlYmtQFwqpI0h03fiXlzqoYf-UfUwUdpNf7yxniR1AD-iRVWh8Tri6NUNSRjOn8anJ0ZArnjcDUWOvUKwzol7LVFSDCHYkU-1E2LdqLd_Skw3nMsyWO346nXnTvjapS53cm9VfT2dSmrs479cYu02bdp6GQCDhuYokeasFrDXuALrlCq4VDHV6-C76kCc8qXtBFu_qfNEgpdlu_7cUGQriG2gAitiuo7IEJNpC2Y8|eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..lJcLLYlBoRou-2Vg.Lon5rPaIIBjS5MjKNOiesBxQMBoaDSchdyfTCPiEvPhW9OLaVjR0wxdhb_E9Zb8DIHvoDgOGcptiSWQvYte48Arq_bgNIIAxGoLrz2p2OBjF21Nk0MQbEl10aXncv_jw00CpSUUDUjQBXB9JKMo6SfhKqgu0JiE5Xl7d9pXNXKV-UG7FvYFsCcaLaEebFnJhBqPIxUfyyBLBKBaInb1CmH22goClGrh7-gY4ztSItutltR7TT_KCjOkEYQE5p1-Z0ecUC0N3NmNF6GPMck2qfBHm2w81INh7qExdVF_kEScsgigPGCyYmIo8f9VX2loSJ6yDX9nyAQxEfKwNNEoF5CIV6TVxV77PQwTh2epMuiidQFD9jDJeSVflmBgkkZC3HxeOInRLuPkDHFMW5S63pENzjaFL4hneDQLEmBREZ1ffPeQwuIG7D6au_q6TY-jDvlo-GvAMKuQ5SMg-LHtQAGYKFTMucgKrdavKt9XeWDY9MSxGkIo6MJfumbP1LIAdyRz72zD6HkDDnIOaoZWszBnkzyEyF8i1aj3Yi-Kf5OWaIaylg2V4-R_miOhPXGgta6-Exd0dzorhpAgRF7Ewg_REm3umQoB9FE1jOIMmY8jYooiKfJxXEPy6sH1Xaa823cXz8WXhCweGpPecR-V7ATbgtMKVekNZwF3xPsFUJM9bxTqDmLrPf_xdxtLkZ3_as11ONmEFBsQpVX0Nq5fouLnlXzBTkIsCphTEAYz6fLu7QM35ybmDooO0D_nf8OzK6epq2HlUcrRIcm1JCiepTQYlgX_hcPdfpRozKjZ4MsClZmRJVyXrMOoLS9OTS861DcAFwCfhT8J6xuO0iyI9TWplEzCW5TiuxJwyDDoddCWS3R7e1jqx2T5A5tR4rBquXb4eK26AMyiBFWoDacgUQiG9fztSzWg3hNNZ36vQX2W-k4PVmtXPI5xFsXB6Boy8vs8lzoV64Qa9Hj_i3fDGYmgSwtaw5d3MUsNT69_S_nCmi2kavLAUjVOstBCoZrhUOX4E3iCPtSW8DjWpDQNpRwxxqFj6djohuY0Qktd4Mf358ajB2Ciz31DzbD9clUo06f2M8qvxjbiOcazV_KeKo1anGnqOXem7CbuVPGKwxHcXz2nGMb8Ifzbt-e438ZGcp_WqSf8phWmXDdZMj-CzeV-4SDS0ApdQN20ICYhoyFTy7Cz6L045SRqXdfI1cVKMFj7Hd4nb3NmmthRP1lSeAvyVX2ANtsy-nsqEjjcHoCyXAqWoEnl1HLZWbkdFsMKI64WqNBfVCTas5ngsOVFyDCsapIcs9_uHzsdZZMj14m2VYjg_gorDpf_3ulah9qm7qHyb64kMFG2gCTCHbPlhREVmakx_zNQEZmOGv4gZ5rfuMWCLQ1CvKx9z5wkUBn02C7rCv8Gtopons9ookyJOKIkuH6NRmjO8JCn4q9UW2yB35OM6Im9TYjm-6RRy9H_5Vwas3PZ8eUEXBIoj3OHklAMfVs4ljf4YzVEmbZWo5iR81qWASzSgOurRP-P64BRaAScIVxf5QtpHass_jkrjDuSDfQqPlrgCwh4-AwEzwydfRgs3HMk5grdXSpCI2cQMYCdgkx0Y3PZ9yj_agMsiqbtuTlEcc2yk0OOAmdLf3AIpfNo5rD4yHi3FhPJ3YYqleuEpwH_bFduDIyNBKu8bhlX2R-20mry8vNRg_foQ1Ub02PF5U9IlZsw4wt5i4qat2qP0KvMXR0ezb3xm.QGuK1wW94G_8WIPdcjblCg|eb6f91ea-9dc3-1a83-fab0-edacb26fef73",
+      "enabled": true,
+      "added_at": "2026-06-22T04:42:22Z",
+      "last_used_at": "2026-06-22T06:34:45Z",
+      "total_requests": 40,
+      "error_count": 0,
+      "status": "active"
+    }
+  ],
+  "proxy": {
+    "api_key": "",
+    "system_prompt": ""
+  },
+  "claude": {
+    "default_model": "best",
+    "system_prompt": ""
+  },
+  "logging": {
+    "max_entries": 500
+  }
+}
