@@ -3,30 +3,60 @@ import json
 import uuid
 import hashlib
 import base64
+import hmac
+import time
+import secrets
 import urllib.parse
 from typing import AsyncGenerator
 
 import httpx
 
-MODEL_MAP = {
-    "best": "最佳",
-    "gpt-5.2-chat": "GPT-5.2-Chat",
-    "gpt-5.1-chat": "GPT-5.1-Chat",
-    "gemini-3.1-pro": "Gemini-3.1-Pro",
-    "gemini-3-flash": "Gemini-3-Flash",
-    "gemini-2.5-flash": "Gemini-2.5-Flash",
-    "claude-sonnet-4.6": "Claude-Sonnet-4.6",
-    "claude-haiku-4.5": "Claude-Haiku-4.5",
-    "glm-5": "GLM-5",
-    "deepseek-v3.2": "DeepSeek-V3.2",
-    "minimax-m2.5": "MiniMax-M2.5",
-    "kimi-k2.5": "Kimi-K2.5",
-    "qwen3.5-plus": "Qwen3.5-Plus",
-    "doubao-seed-1.8": "Doubao-Seed-1.8",
-}
+SIGN_KEY = "f8d0e6a73f8d4b1a9c3d2e1f9a4b7c6d"
 
 
+# // 将 Tabbit 展示模型名转换为 OpenAI 风格模型 id
+def normalize_model_id(display_name: str) -> str:
+    return re.sub(r"[^a-z0-9.]+", "-", display_name.lower()).strip("-")
+
+
+# // 从 Tabbit 当前模型配置接口读取模型映射
+async def fetch_model_map(base_url: str | None = None) -> dict[str, str]:
+    api_base = base_url or "https://web.tabbitbrowser.com"
+    async with httpx.AsyncClient(timeout=15, verify=False) as client:
+        resp = await client.get(
+            f"{api_base}/proxy/v1/model_config/models",
+            params={"a": "0", "scene": "chat"},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+                "Referer": f"{api_base}/chat/new",
+            },
+        )
+    if resp.status_code != 200:
+        raise Exception(f"Tabbit model API error {resp.status_code}: {resp.text}")
+
+    body = resp.json()
+    models = body.get("models")
+    if not isinstance(models, list):
+        raise Exception("Tabbit model API response missing models")
+
+    model_map: dict[str, str] = {}
+    for item in models:
+        display_name = item.get("display_name") if isinstance(item, dict) else None
+        if not display_name:
+            raise Exception(f"Tabbit model item missing display_name: {item}")
+        model_id = normalize_model_id(display_name)
+        model_map[model_id] = display_name
+        model_map[display_name.lower()] = display_name
+
+    if "default" in model_map:
+        model_map["best"] = model_map["default"]
+    return model_map
+
+
+# // 操作 Tabbit Web API
 class TabbitClient:
+    # // 初始化 Tabbit 客户端和认证字段
     def __init__(self, token_str: str, base_url: str | None = None, client_id: str | None = None):
         parts = token_str.split("|")
         self.jwt_token = parts[0]
@@ -42,6 +72,7 @@ class TabbitClient:
             verify=False,
         )
 
+    # // 从 JWT 中提取用户标识
     def _extract_user_id(self, token: str) -> str:
         try:
             payload = json.loads(
@@ -51,6 +82,7 @@ class TabbitClient:
         except Exception:
             return str(uuid.uuid4())
 
+    # // 生成 Tabbit 请求头
     def _get_headers(self, referer_path: str = "/newtab") -> dict:
         return {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
@@ -64,6 +96,7 @@ class TabbitClient:
             "referer": f"{self.base_url}{referer_path}",
         }
 
+    # // 生成 Tabbit 登录 Cookie
     def _get_cookies(self) -> dict:
         cookies = {
             "token": self.jwt_token,
@@ -75,6 +108,24 @@ class TabbitClient:
             cookies["next-auth.session-token"] = self.next_auth
         return cookies
 
+    # // 按当前前端规则生成请求签名
+    def _get_sign_headers(self, body_text: str) -> dict:
+        timestamp = str(int(time.time() * 1000))
+        nonce = secrets.token_hex(16)
+        body_hash = hashlib.sha256(body_text.encode("utf-8")).hexdigest()
+        sign_text = f"{timestamp}.{nonce}.{body_hash}"
+        signature = hmac.new(
+            SIGN_KEY.encode("utf-8"),
+            sign_text.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return {
+            "x-timestamp": timestamp,
+            "x-signature": nonce,
+            "x-nonce": signature,
+        }
+
+    # // 创建新的 Tabbit 聊天会话
     async def create_chat_session(self) -> str:
         router_state = [
             "",
@@ -118,6 +169,11 @@ class TabbitClient:
             return match.group(1)
         raise Exception("Failed to extract chat session_id from RSC response")
 
+    # // 获取当前 Tabbit 支持的模型映射
+    async def get_model_map(self) -> dict[str, str]:
+        return await fetch_model_map(self.base_url)
+
+    # // 向 Tabbit 发送聊天消息并返回 SSE 事件
     async def send_message(
         self, session_id: str, content: str, model: str
     ) -> AsyncGenerator[dict, None]:
@@ -125,24 +181,31 @@ class TabbitClient:
             "chat_session_id": session_id,
             "content": content,
             "selected_model": model,
+            "parallel_group_id": None,
+            "task_name": "chat",
             "agent_mode": False,
             "metadatas": {"html_content": f"<p>{content}</p>"},
+            "references": [],
             "entity": {
                 "key": hashlib.md5(b"").hexdigest(),
                 "extras": {"type": "tab", "url": ""},
             },
         }
+        body_text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
         headers = {
             **self._get_headers(f"/chat/{session_id}"),
             "Accept": "text/event-stream",
             "Content-Type": "application/json",
+            "Cache-Control": "no-cache",
+            "unique-uuid": self.device_id,
+            **self._get_sign_headers(body_text),
         }
 
         async with self.client.stream(
             "POST",
             f"{self.base_url}/chat/send",
-            json=payload,
+            content=body_text,
             headers=headers,
             cookies=self._get_cookies(),
         ) as resp:
@@ -160,5 +223,7 @@ class TabbitClient:
                     data_str = line[len("data:") :].strip()
                     try:
                         yield {"event": current_event, "data": json.loads(data_str)}
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        raise Exception(
+                            f"Failed to parse Tabbit SSE event {current_event}: {data_str}"
+                        ) from e

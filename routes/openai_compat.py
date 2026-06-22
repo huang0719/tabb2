@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from core.tabbit_client import TabbitClient, MODEL_MAP
+from core.tabbit_client import TabbitClient, fetch_model_map
 from core.token_manager import TokenManager
 from core.log_store import LogStore, LogEntry
 from core.config import ConfigManager
@@ -23,6 +23,7 @@ _logs: LogStore | None = None
 _fallback_clients: dict[str, TabbitClient] = {}
 
 
+# // 注入路由运行所需的共享状态
 def init(token_manager: TokenManager, config: ConfigManager, log_store: LogStore):
     global _tm, _cfg, _logs
     _tm = token_manager
@@ -41,6 +42,7 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
 
 
+# // 将 OpenAI 消息数组合并为 Tabbit 单条输入
 def _build_content(messages: list[ChatMessage]) -> str:
     system_prompt = _cfg.get("proxy", "system_prompt") if _cfg else ""
     if len(messages) == 1 and not system_prompt:
@@ -56,6 +58,7 @@ def _build_content(messages: list[ChatMessage]) -> str:
     return "\n\n".join(parts) + "\n\n[Assistant]:"
 
 
+# // 按请求授权信息获取可用 Tabbit 客户端
 async def _get_client_and_token(
     authorization: str | None,
 ) -> tuple[TabbitClient, str, str]:
@@ -88,9 +91,11 @@ async def _get_client_and_token(
     return _fallback_clients[token], "bearer", ""
 
 
+# // 将 Tabbit SSE 转换为 OpenAI 流式响应
 async def _stream_handler(client, session_id, content, tabbit_model, req_model, completion_id, token_name, token_id):
     start = time.time()
     error_msg = ""
+    got_content = False
     try:
         yield (
             f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
@@ -99,6 +104,7 @@ async def _stream_handler(client, session_id, content, tabbit_model, req_model, 
         async for event in client.send_message(session_id, content, tabbit_model):
             et, ed = event["event"], event["data"]
             if et == "message_chunk" and "content" in ed:
+                got_content = got_content or bool(ed["content"])
                 chunk = {
                     "id": completion_id,
                     "object": "chat.completion.chunk",
@@ -116,6 +122,8 @@ async def _stream_handler(client, session_id, content, tabbit_model, req_model, 
                     f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
                 )
 
+        if not got_content:
+            raise Exception("Tabbit stream finished without message content")
         yield "data: [DONE]\n\n"
         if token_id:
             _tm.report_success(token_id)
@@ -138,12 +146,19 @@ async def _stream_handler(client, session_id, content, tabbit_model, req_model, 
         )
 
 
+# // 处理 OpenAI Chat Completions 请求
 @router.post("/v1/chat/completions")
 async def chat_completions(
     req: ChatCompletionRequest, authorization: str = Header(None)
 ):
     client, token_name, token_id = await _get_client_and_token(authorization)
-    tabbit_model = MODEL_MAP.get(req.model.lower(), "最佳")
+    try:
+        model_map = await client.get_model_map()
+        tabbit_model = model_map[req.model.lower()]
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"unsupported model: {req.model}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
     content = _build_content(req.messages)
 
     try:
@@ -187,6 +202,8 @@ async def chat_completions(
         async for event in client.send_message(session_id, content, tabbit_model):
             if event["event"] == "message_chunk":
                 full_text += event["data"].get("content", "")
+        if not full_text:
+            raise Exception("Tabbit response finished without message content")
         if token_id:
             _tm.report_success(token_id)
     except Exception as e:
@@ -222,12 +239,15 @@ async def chat_completions(
     }
 
 
+# // 返回当前 Tabbit 模型列表
 @router.get("/v1/models")
 async def list_models():
+    model_map = await fetch_model_map(_cfg.get("tabbit", "base_url") if _cfg else None)
+    model_ids = list(dict.fromkeys(model_map.keys()))
     return {
         "object": "list",
         "data": [
             {"id": k, "object": "model", "owned_by": "tabbit"}
-            for k in MODEL_MAP.keys()
+            for k in model_ids
         ],
     }
