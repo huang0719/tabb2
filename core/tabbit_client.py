@@ -12,6 +12,7 @@ from typing import AsyncGenerator
 import httpx
 
 SIGN_KEY = "f8d0e6a73f8d4b1a9c3d2e1f9a4b7c6d"
+MODEL_MAP = {}
 
 
 # // 将 Tabbit 展示模型名转换为 OpenAI 风格模型 id
